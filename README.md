@@ -42,8 +42,41 @@ x_bd, y_bd, trigger, bd_indices = injector.inject(
 ### Running the Demo
 
 ```bash
+# Offline demo (no network, no external model) — prints full report, exit 0
 python3 model_poison.py
+
+# Tunable experiment
+python3 model_poison.py --samples 500 --dim 16 --classes 4 --epochs 50 --seed 42
+
+# JSON report to reports/ (gitignored)
+python3 model_poison.py --output reports/ai2-report.json
+
+# Quiet CI mode + JSON
+python3 model_poison.py --quiet --output reports/ai2-report.json
 ```
+
+### Exit Codes
+
+- `0` — experiment completed cleanly
+- `1` — error (bad arguments / report write failure)
+
+### Live Lab Test Plan
+
+Runs entirely offline — the training data and model are generated locally;
+nothing is downloaded and no external ML service is queried.
+
+1. **Demo**: `python3 model_poison.py` — expect clean accuracy plus label-flip, random-noise, backdoor, undersampling, and outlier-injection blocks. Exit `0`.
+2. **JSON report**: `python3 model_poison.py --output reports/ai2-report.json` — verify `attacks.backdoor.success_rate`, `trigger_indices`, and `summary` present.
+3. **Backdoor effect**: confirm `attacks.backdoor.success_rate` is high (trigger reliably drives samples to the target class) while normal accuracy stays high — the backdoor is stealthy.
+4. **Unit tests**: `python3 -m unittest discover -s tests -v` — all pass (poisoning fractions, trigger shape/size, backdoor verification, undersampling, deterministic-with-seed, CLI JSON write).
+5. **Determinism**: `--seed 42` twice produces identical `summary` metrics.
+
+## Metrics
+
+- Real attack code paths exercised offline: `DataPoisoner.label_flip`, `DataPoisoner.random_noise`, `BackdoorInjector.inject`, `BackdoorInjector.verify_backdoor`, `TrainingDataManager.undersample_class/add_outliers`, `CleanModel.train_step/accuracy`
+- Metrics emitted per attack: accuracy, accuracy drop vs clean, poisoned-sample count; backdoor also reports `success_rate`, `clean_accuracy_preserved`, and `trigger_indices`
+- 8 unit tests; exit-code contract `0` clean / `1` error
+- Zero runtime cloud/network dependencies; offline demo needs only numpy
 
 ## Example Output
 

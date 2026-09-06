@@ -180,80 +180,172 @@ def train_model(model: CleanModel, x: np.ndarray, y: np.ndarray,
     return losses
 
 
-def main():
-    print("=" * 60)
-    print("  AI2 — Model Poisoning Tool Demo")
-    print("=" * 60)
-
-    input_dim = 16
-    num_classes = 4
-
-    tm = TrainingDataManager()
-    x_clean, y_clean = tm.generate_dataset(500, input_dim, num_classes)
+def run_experiment(num_samples: int = 500, input_dim: int = 16,
+                   num_classes: int = 4, seed: int = 42,
+                   epochs: int = 50) -> dict:
+    """Run the full poisoning experiment and return structured results."""
+    tm = TrainingDataManager(seed=seed)
+    x_clean, y_clean = tm.generate_dataset(num_samples, input_dim, num_classes)
     x_test, y_test = tm.generate_dataset(100, input_dim, num_classes)
 
-    model_clean = CleanModel(input_dim, num_classes)
-    train_model(model_clean, x_clean, y_clean, epochs=50)
+    model_clean = CleanModel(input_dim, num_classes, seed=seed)
+    train_model(model_clean, x_clean, y_clean, epochs=epochs)
     clean_acc = model_clean.accuracy(x_test, y_test)
-    print(f"\nClean model accuracy: {clean_acc:.2%}")
 
-    print("\n--- Label Flip Poisoning ---")
-    poisoner = DataPoisoner()
+    poisoner = DataPoisoner(seed=seed)
     x_p, y_p, p_idx = poisoner.label_flip(x_clean, y_clean, poison_rate=0.3)
-    model_flip = CleanModel(input_dim, num_classes)
-    train_model(model_flip, x_p, y_p, epochs=50)
+    model_flip = CleanModel(input_dim, num_classes, seed=seed)
+    train_model(model_flip, x_p, y_p, epochs=epochs)
     flip_acc = model_flip.accuracy(x_test, y_test)
-    print(f"  Poisoned accuracy: {flip_acc:.2%} (was {clean_acc:.2%})")
-    print(f"  Poisoned samples: {len(p_idx)}")
 
-    print("\n--- Random Noise Poisoning ---")
     x_n, y_n, n_idx = poisoner.random_noise(x_clean, y_clean,
-                                             poison_rate=0.3, noise_scale=0.5)
-    model_noise = CleanModel(input_dim, num_classes)
-    train_model(model_noise, x_n, y_n, epochs=50)
+                                            poison_rate=0.3, noise_scale=0.5)
+    model_noise = CleanModel(input_dim, num_classes, seed=seed)
+    train_model(model_noise, x_n, y_n, epochs=epochs)
     noise_acc = model_noise.accuracy(x_test, y_test)
-    print(f"  Poisoned accuracy: {noise_acc:.2%} (was {clean_acc:.2%})")
-    print(f"  Poisoned samples: {len(n_idx)}")
 
-    print("\n--- Backdoor Injection ---")
-    injector = BackdoorInjector(trigger_size=3)
+    injector = BackdoorInjector(trigger_size=3, seed=seed)
     x_bd, y_bd, trigger, bd_idx = injector.inject(
         x_clean, y_clean, target_label=0, poison_rate=0.1)
-    model_bd = CleanModel(input_dim, num_classes)
-    train_model(model_bd, x_bd, y_bd, epochs=50)
+    model_bd = CleanModel(input_dim, num_classes, seed=seed)
+    train_model(model_bd, x_bd, y_bd, epochs=epochs)
     bd_acc = model_bd.accuracy(x_test, y_test)
-    bd_result = injector.verify_backdoor(model_bd, x_test, trigger, target_label=0)
-    print(f"  Clean accuracy: {bd_acc:.2%}")
-    print(f"  Backdoor success: {bd_result['backdoor_success_rate']:.2%}")
-    print(f"  Trigger pattern: {np.where(trigger != 0)[0].tolist()}")
+    bd_result = injector.verify_backdoor(model_bd, x_test, trigger,
+                                         target_label=0)
 
-    print("\n--- Undersampling Attack ---")
     x_us, y_us = tm.undersample_class(x_clean, y_clean,
-                                        target_class=0, keep_ratio=0.1)
-    model_us = CleanModel(input_dim, num_classes)
-    train_model(model_us, x_us, y_us, epochs=50)
+                                      target_class=0, keep_ratio=0.1)
+    model_us = CleanModel(input_dim, num_classes, seed=seed)
+    train_model(model_us, x_us, y_us, epochs=epochs)
     us_acc = model_us.accuracy(x_test, y_test)
-    print(f"  Accuracy after undersampling class 0: {us_acc:.2%}")
-    print(f"  Training samples: {len(y_us)} (was {len(y_clean)})")
 
-    print("\n--- Outlier Injection ---")
     x_out, y_out = tm.add_outliers(x_clean, y_clean, num_outliers=50)
-    model_out = CleanModel(input_dim, num_classes)
-    train_model(model_out, x_out, y_out, epochs=50)
+    model_out = CleanModel(input_dim, num_classes, seed=seed)
+    train_model(model_out, x_out, y_out, epochs=epochs)
     out_acc = model_out.accuracy(x_test, y_test)
-    print(f"  Accuracy with outliers: {out_acc:.2%}")
-    print(f"  Training samples: {len(y_out)} (was {len(y_clean)})")
 
-    print("\n--- Summary ---")
-    print(f"  Clean:             {clean_acc:.2%}")
-    print(f"  Label Flip:        {flip_acc:.2%}")
-    print(f"  Random Noise:      {noise_acc:.2%}")
-    print(f"  Backdoor:          {bd_acc:.2%}")
-    print(f"  Undersampling:     {us_acc:.2%}")
-    print(f"  Outlier Injection: {out_acc:.2%}")
+    return {
+        "model": {
+            "input_dim": input_dim,
+            "num_classes": num_classes,
+            "train_samples": num_samples,
+            "test_samples": 100,
+            "seed": seed,
+            "epochs": epochs,
+        },
+        "clean": {"accuracy": clean_acc},
+        "attacks": {
+            "label_flip": {
+                "accuracy": flip_acc,
+                "accuracy_drop": clean_acc - flip_acc,
+                "poisoned_samples": int(len(p_idx)),
+            },
+            "random_noise": {
+                "accuracy": noise_acc,
+                "accuracy_drop": clean_acc - noise_acc,
+                "poisoned_samples": int(len(n_idx)),
+            },
+            "backdoor": {
+                "accuracy": bd_acc,
+                "success_rate": bd_result["backdoor_success_rate"],
+                "clean_accuracy_preserved": bd_result["clean_accuracy_preserved"],
+                "trigger_indices": np.where(trigger != 0)[0].tolist(),
+                "poisoned_samples": int(len(bd_idx)),
+            },
+            "undersampling": {
+                "accuracy": us_acc,
+                "accuracy_drop": clean_acc - us_acc,
+                "train_samples_after": int(len(y_us)),
+            },
+            "outlier_injection": {
+                "accuracy": out_acc,
+                "accuracy_drop": clean_acc - out_acc,
+                "train_samples_after": int(len(y_out)),
+            },
+        },
+        "summary": {
+            "clean": clean_acc,
+            "label_flip": flip_acc,
+            "random_noise": noise_acc,
+            "backdoor": bd_acc,
+            "undersampling": us_acc,
+            "outlier_injection": out_acc,
+        },
+    }
 
-    print("\nDone.")
+
+def format_report(results: dict) -> str:
+    lines = []
+    lines.append("=" * 60)
+    lines.append("  AI2 — Model Poisoning Tool Demo")
+    lines.append("=" * 60)
+    model = results["model"]
+    lines.append(f"\nClean model accuracy: {results['clean']['accuracy']:.2%}")
+
+    a = results["attacks"]
+    lines.append("\n--- Label Flip Poisoning ---")
+    lines.append(f"  Poisoned accuracy: {a['label_flip']['accuracy']:.2%} "
+                 f"(drop {a['label_flip']['accuracy_drop']:+.2%})")
+    lines.append(f"  Poisoned samples: {a['label_flip']['poisoned_samples']}")
+
+    lines.append("\n--- Random Noise Poisoning ---")
+    lines.append(f"  Poisoned accuracy: {a['random_noise']['accuracy']:.2%} "
+                 f"(drop {a['random_noise']['accuracy_drop']:+.2%})")
+
+    lines.append("\n--- Backdoor Injection ---")
+    lines.append(f"  Clean accuracy: {a['backdoor']['accuracy']:.2%}")
+    lines.append(f"  Backdoor success: {a['backdoor']['success_rate']:.2%}")
+    lines.append(f"  Trigger pattern: {a['backdoor']['trigger_indices']}")
+
+    lines.append("\n--- Undersampling Attack ---")
+    lines.append(f"  Accuracy after undersampling class 0: "
+                 f"{a['undersampling']['accuracy']:.2%}")
+    lines.append(f"  Training samples: {a['undersampling']['train_samples_after']}")
+
+    lines.append("\n--- Outlier Injection ---")
+    lines.append(f"  Accuracy with outliers: {a['outlier_injection']['accuracy']:.2%}")
+
+    lines.append("\n--- Summary ---")
+    for k, v in results["summary"].items():
+        lines.append(f"  {k.replace('_', ' ').title():<18}{v:.2%}")
+    lines.append("\nDone.")
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    import argparse
+    import json
+    import os
+
+    parser = argparse.ArgumentParser(
+        prog="ai2-model-poison",
+        description="Model poisoning simulation (label flip, noise, backdoor) "
+                    "on a local logistic model. Offline, self-contained.")
+    parser.add_argument("--samples", type=int, default=500,
+                        help="number of synthetic training samples")
+    parser.add_argument("--dim", type=int, default=16, help="input dimensions")
+    parser.add_argument("--classes", type=int, default=4, help="number of classes")
+    parser.add_argument("--epochs", type=int, default=50, help="training epochs")
+    parser.add_argument("--seed", type=int, default=42, help="RNG seed")
+    parser.add_argument("--output", metavar="FILE",
+                        help="write JSON report to FILE (e.g. reports/ai2-report.json)")
+    parser.add_argument("--quiet", action="store_true",
+                        help="suppress human-readable output")
+    args = parser.parse_args(argv)
+
+    results = run_experiment(
+        num_samples=args.samples, input_dim=args.dim,
+        num_classes=args.classes, seed=args.seed, epochs=args.epochs)
+
+    if args.output:
+        out_dir = os.path.dirname(os.path.abspath(args.output))
+        os.makedirs(out_dir, exist_ok=True)
+        with open(args.output, "w", encoding="utf-8") as fh:
+            json.dump(results, fh, indent=2)
+    if not args.quiet:
+        print(format_report(results))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
